@@ -1,0 +1,74 @@
+
+
+---
+# This section creates the Service Account for our pod to use
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: cluster-admin-sa
+  namespace: default # Assumes you're deploying to the 'default' namespace
+
+---
+# This section binds the "cluster-admin" role to our new Service Account
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: cluster-admin-binding
+subjects:
+- kind: ServiceAccount
+  name: cluster-admin-sa
+  namespace: default # Assumes you're deploying to the 'default' namespace
+roleRef:
+  kind: ClusterRole
+  name: cluster-admin # This is the built-in, all-powerful role
+  apiGroup: rbac.authorization.k8s.io
+---
+
+
+# This section defines the Deployment for our application.
+# A Deployment manages a set of identical Pods (our application instances).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tasky-app-deployment # The name of this Deployment object
+spec:
+  replicas: 1 # We want to run 1 copy (Pod) of our application container
+  selector:
+    matchLabels:
+      app: tasky # This label links the Deployment to the Pods it manages
+  template: # This template describes the Pods that will be created
+    metadata:
+      labels:
+        app: tasky # Pods created will have this label
+    spec:
+      # This section grants the Pod cluster-admin privileges (intentional misconfiguration)
+      serviceAccountName: cluster-admin-sa # Links to the ServiceAccount we created
+      containers:
+      - name: tasky-container # A name for the container within the Pod
+        # Ensure your 12-digit AWS Account ID is correct here
+        image: 149536462665.dkr.ecr.us-east-1.amazonaws.com/wiz-app-repo:latest
+        ports:
+        # Port the Go application listens on
+        - containerPort: 8080
+        env:
+        # === THIS IS THE FIX ===
+        # The app is looking for 'MONGODB_URI', not 'MONGO_CONNECTION_STRING'
+        - name: MONGODB_URI
+          value: "mongodb://tasky_user:supersecretpassword@10.0.1.67:27017/tasky?authSource=admin"
+
+---
+# Service Section (Reverted to Classic Load Balancer)
+apiVersion: v1
+kind: Service
+metadata:
+  name: tasky-service
+  # REMOVED the annotations block for ALB
+spec:
+  selector:
+    app: tasky
+  ports:
+  - protocol: TCP
+    port: 80       # ELB listens on port 80
+    targetPort: 8080 # Forwards to container port 8080
+  # ADDED type: LoadBalancer back
+  type: LoadBalancer
