@@ -6,6 +6,13 @@ terraform {
       version = "~> 5.0"
     }
   }
+  
+  # === NEW BACKEND CONFIGURATION ===
+  backend "s3" {
+    bucket = "wiz-tf-state-sswan30"   # Replace with the bucket name you just created
+    key    = "terraform/state.tfstate"
+    region = "us-east-1"
+  }
 }
 
 # This block configures the specific settings for the AWS provider, such as the deployment region.
