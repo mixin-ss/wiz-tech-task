@@ -40,3 +40,26 @@ jobs:
     - name: Terraform Apply
        if: github.ref == 'refs/heads/main'
        run: terraform apply -auto-approve
+
+deploy-app:
+    name: Deploy to Kubernetes
+    needs: terraform  # This tells GitHub: "Wait for Terraform to finish successfully first"
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' # Only deploy on main branch
+
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v3
+
+    - name: Configure AWS Credentials
+      uses: aws-actions/configure-aws-credentials@v1
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: us-east-1
+
+    - name: Update Kubeconfig
+      run: aws eks update-kubeconfig --name wiz-cluster --region us-east-1
+
+    - name: Deploy Manifests
+      run: kubectl apply -f app-deployment.yaml
