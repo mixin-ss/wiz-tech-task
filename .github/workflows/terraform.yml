@@ -35,17 +35,17 @@ jobs:
 
     - name: Terraform Plan
       run: terraform plan
-      
-    # Uncomment the lines below to enable auto-deploy!
-    - name: Terraform Apply
-       if: github.ref == 'refs/heads/main'
-       run: terraform apply -auto-approve
 
-deploy-app:
+    # UNCOMMENT THE LINES BELOW TO ENABLE AUTO-DEPLOY
+    - name: Terraform Apply
+      if: github.ref == 'refs/heads/main'
+      run: terraform apply -auto-approve
+
+  deploy-app:
     name: Deploy to Kubernetes
-    needs: terraform  # This tells GitHub: "Wait for Terraform to finish successfully first"
+    needs: terraform
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' # Only deploy on main branch
+    if: github.ref == 'refs/heads/main'
 
     steps:
     - name: Checkout Code
