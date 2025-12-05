@@ -170,12 +170,15 @@ resource "aws_security_group" "db" {
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"] # Intentionally insecure for the exercise
   }
+
   ingress {
     from_port   = 27017
     to_port     = 27017
     protocol    = "tcp"
-    cidr_blocks = [aws_vpc.main.cidr_block] # Allows connection from K8s
+    # CHANGE: Restrict specific access to the Private Subnet CIDR only
+    cidr_blocks = [aws_subnet.private.cidr_block] 
   }
+
   egress {
     from_port   = 0
     to_port     = 0
