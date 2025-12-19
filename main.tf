@@ -466,3 +466,23 @@ resource "aws_ecr_repository" "app" {
     Name = "wiz-app-repo"
   }
 }
+
+# -------Granting my AWS User Cluster Admin Permissions--------
+
+# 1. Add your IAM User to the cluster's "Guest List"
+resource "aws_eks_access_entry" "console_user" {
+  cluster_name      = aws_eks_cluster.cluster.name
+  principal_arn     = "arn:aws:iam::149536462665:user/your-username"
+  type              = "STANDARD"
+}
+
+# 2. Grant that user "Cluster Admin" permissions
+resource "aws_eks_access_policy_association" "console_admin" {
+  cluster_name      = aws_eks_cluster.cluster.name
+  principal_arn     = aws_eks_access_entry.console_user.principal_arn
+  policy_arn        = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
+
+  access_scope {
+    type = "cluster"
+  }
+}
