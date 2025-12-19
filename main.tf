@@ -425,6 +425,13 @@ resource "aws_eks_cluster" "cluster" {
     subnet_ids = [aws_subnet.private.id, aws_subnet.public.id, aws_subnet.public_b.id]
   }
 
+# Allows hybrid mode for AWS User auth
+access_config {
+    authentication_mode                         = "API_AND_CONFIG_MAP"
+    bootstrap_cluster_creator_admin_permissions = true
+  }
+
+
   # Ensures the IAM role is fully created before the cluster
   depends_on = [
     aws_iam_role_policy_attachment.eks_cluster_policy,
