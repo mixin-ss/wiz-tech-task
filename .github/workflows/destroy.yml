@@ -1,0 +1,49 @@
+name: Destroy Infrastructure
+
+on:
+  workflow_dispatch:  # Creates a manual button in the GitHub Actions tab
+
+jobs:
+  destroy:
+    name: Tear Down Infrastructure
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_wrapper: false
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Terraform Init
+        run: terraform init
+
+      - name: Remove Load Balancer (Cost Saver)
+        # We explicitly delete the K8s service to ensure the AWS Load Balancer is removed.
+        # If we skip this, the cluster dies too fast and leaves the LB behind ($$$).
+        continue-on-error: true
+        run: |
+          aws eks update-kubeconfig --name wiz-cluster --region us-east-1
+          kubectl delete service tasky-frontend || echo "Service not found, continuing..."
+
+      - name: Targeted Destroy (Protect Backups)
+        # This destroys the Cost Drivers but EXCLUDES the S3 Bucket
+        run: |
+          terraform destroy \
+            -target="aws_eks_node_group.nodes" \
+            -target="aws_eks_cluster.cluster" \
+            -target="aws_instance.db" \
+            -target="aws_nat_gateway.nat" \
+            -target="aws_eip.nat" \
+            -target="aws_vpc.main" \
+            -target="aws_security_group.db" \
+            -auto-approve
