@@ -54,7 +54,7 @@ spec:
         # === THIS IS THE FIX ===
         # The app is looking for 'MONGODB_URI', not 'MONGO_CONNECTION_STRING'
         - name: MONGODB_URI
-          value: "mongodb://tasky_user:supersecretpassword@10.0.1.67:27017/tasky?authSource=admin"
+          value: "mongodb://tasky_user:supersecretpassword@10.0.1.50:27017/tasky?authSource=admin"
 
 ---
 # Service Section (Reverted to Classic Load Balancer)
