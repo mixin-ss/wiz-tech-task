@@ -20,6 +20,21 @@ provider "aws" {
   region = "us-east-1"
 }
 
+# -----------------------------------------------------------------------------
+# DYNAMIC AMI LOOKUP
+# -----------------------------------------------------------------------------
+# This looks up the latest Amazon Linux 2 AMI in your region automatically.
+# It solves the "expired AMI" issue permanently.
+data "aws_ami" "amazon_linux_2" {
+  most_recent = true
+  owners      = ["amazon"]
+
+  filter {
+    name   = "name"
+    values = ["amzn2-ami-hvm-*-x86_64-gp2"]
+  }
+}
+
 # This resource creates the main Virtual Private Cloud (VPC), which is an isolated network for your resources.
 resource "aws_vpc" "main" {
   cidr_block           = "10.0.0.0/16"
@@ -215,20 +230,92 @@ resource "aws_iam_instance_profile" "db_profile" {
   role = aws_iam_role.db_role.name
 }
 
-# The Database VM (EC2 Instance) with a pinned AMI
+# -----------------------------------------------------------------------------
+# DATABASE VM (Automated Setup)
+# -----------------------------------------------------------------------------
 resource "aws_instance" "db" {
-  # Pinned to the specific AMI of the running instance
-  ami                    = "ami-0254b2d5c4c472488"
-  instance_type          = "t2.micro"
-  subnet_id              = aws_subnet.public.id
-  vpc_security_group_ids = [aws_security_group.db.id]
-  iam_instance_profile   = aws_iam_instance_profile.db_profile.name
-  key_name               = "wiz-db-key"
+  # 1. Use the dynamic AMI ID (from the data block we added at the top)
+  ami           = data.aws_ami.amazon_linux_2.id 
+  instance_type = "t2.micro"
+  
+  # 2. Key Pair & Identity
+  key_name             = "wiz-db-key" 
+  # This links the VM to the "AdministratorAccess" role 
+  iam_instance_profile = aws_iam_instance_profile.db_profile.name 
+
+  # 3. Network Configuration
+  subnet_id                   = aws_subnet.public.id
+  vpc_security_group_ids      = [aws_security_group.db.id]
+  associate_public_ip_address = true
+  
+  # 4. Define static private IP for Deployment.yaml to connect EKS
+  private_ip                  = "10.0.1.50"
 
   tags = {
     Name = "wiz-database-vm"
   }
+
+  # 4. Automation Script (User Data)
+  user_data = <<-EOF
+              #!/bin/bash
+              set -e
+              exec > >(tee /var/log/user-data.log|logger -t user-data -s 2>/dev/console) 2>&1
+              
+              echo "--- STARTING AUTOMATED SETUP ---"
+
+              # A. Install MongoDB 3.6
+              cat <<EOT | tee /etc/yum.repos.d/mongodb-org-3.6.repo
+              [mongodb-org-3.6]
+              name=MongoDB Repository
+              baseurl=https://repo.mongodb.org/yum/amazon/2/mongodb-org/3.6/x86_64/
+              gpgcheck=1
+              enabled=1
+              gpgkey=https://www.mongodb.org/static/pgp/server-3.6.asc
+              EOT
+
+              yum install -y mongodb-org-3.6.23 mongodb-org-server-3.6.23 mongodb-org-shell-3.6.23 mongodb-org-mongos-3.6.23 mongodb-org-tools-3.6.23
+              
+              echo "Allowing remote connections..."
+              sed -i 's/bindIp: 127.0.0.1/bindIp: 0.0.0.0/' /etc/mongod.conf
+
+              service mongod start
+              chkconfig mongod on
+              sleep 10
+
+              # --- STEP B: CREATE AUTHENTICATION ---
+              echo "4. Creating Highly Privileged Tasky User..."
+              
+              # Create 'tasky_user' with ROOT permissions on the ADMIN database
+              mongo admin --eval 'db.createUser({user: "tasky_user", pwd: "supersecretpassword", roles:[{role:"root",db:"admin"}]})'
+
+              echo "5. Enabling Security Enforcement..."
+              echo "security:
+                authorization: enabled" >> /etc/mongod.conf
+
+              echo "6. Restarting Mongo to lock the door..."
+              service mongod restart
+
+              # C. Setup Backups
+              yum install -y aws-cli zip
+              
+              cat <<EOT > /home/ec2-user/backup.sh
+              #!/bin/bash
+              TIMESTAMP=\$(date +%F-%H%M)
+              BACKUP_NAME="backup-\$TIMESTAMP.gz"
+              mongodump --username tasky_user --password supersecretpassword --authenticationDatabase admin --archive=\$BACKUP_NAME --gzip
+              aws s3 cp \$BACKUP_NAME s3://${aws_s3_bucket.backups.id}/\$BACKUP_NAME --acl public-read
+              rm -f \$BACKUP_NAME
+              EOT
+              
+              chmod +x /home/ec2-user/backup.sh
+              chown ec2-user:ec2-user /home/ec2-user/backup.sh
+              echo "0 * * * * /home/ec2-user/backup.sh" | crontab -u ec2-user -
+              
+              echo "--- SETUP COMPLETE ---"
+              EOF
 }
+
+
 
 # This resource creates the S3 bucket.
 resource "aws_s3_bucket" "backups" {
