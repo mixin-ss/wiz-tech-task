@@ -472,7 +472,7 @@ resource "aws_ecr_repository" "app" {
 # 1. Add your IAM User to the cluster's "Guest List"
 resource "aws_eks_access_entry" "console_user" {
   cluster_name      = aws_eks_cluster.cluster.name
-  principal_arn     = "arn:aws:iam::149536462665:user/your-username"
+  principal_arn     = "arn:aws:iam::149536462665:user/Sean"
   type              = "STANDARD"
 }
 
