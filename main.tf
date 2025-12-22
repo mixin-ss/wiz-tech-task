@@ -128,7 +128,7 @@ resource "aws_route_table_association" "public_b" {
 
 # This resource creates an Elastic IP, a static public IP address for our NAT Gateway.
 resource "aws_eip" "nat" {
-  vpc        = true
+  domain     = "vpc"    # <--- UPDATED: This replaces "vpc = true"
   depends_on = [aws_internet_gateway.gw]
 }
 
