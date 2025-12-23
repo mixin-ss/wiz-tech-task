@@ -5,7 +5,7 @@ on:
 
 jobs:
   destroy:
-    name: Two-Stage Destruction
+    name: Clean Destroy
     runs-on: ubuntu-latest
     
     steps:
@@ -27,19 +27,16 @@ jobs:
       - name: Terraform Init
         run: terraform init
 
-      - name: 1. Clean up Kubernetes Load Balancer
+      - name: 1. Clean up Kubernetes (Wait for ELB)
         continue-on-error: true
         run: |
           aws eks update-kubeconfig --name wiz-cluster --region us-east-1
-          # Delete the service to trigger ELB deletion
           kubectl delete service tasky-frontend || echo "Service not found"
-          
-          # CRITICAL: Wait for AWS to actually detach the network interfaces
-          echo "Waiting 60 seconds for Load Balancer cleanup..."
-          sleep 60
+          echo "Waiting 90 seconds for AWS to detach Load Balancer Network Interfaces..."
+          sleep 90
 
-      - name: 2. Phase 1 Destroy (Compute & Gateways)
-        # We destroy the things that USE the network first
+      - name: 2. Phase 1 Destroy (Compute & NAT)
+        # Destroy the "users" of the network first
         run: |
           terraform destroy \
             -target="aws_eks_node_group.nodes" \
@@ -49,11 +46,18 @@ jobs:
             -target="aws_eip.nat" \
             -auto-approve
 
-      - name: 3. Phase 2 Destroy (Network)
-        # Now that the subnets are empty, we can safely delete the VPC
-        # This keeps the S3 bucket safe because we never target it
+      - name: 3. Phase 2 Destroy (Network Cleanup)
+        # Explicitly destroy the CONTENTS of the VPC, then the VPC itself
         run: |
           terraform destroy \
-            -target="aws_vpc.main" \
+            -target="aws_internet_gateway.gw" \
+            -target="aws_subnet.public" \
+            -target="aws_subnet.public_b" \
+            -target="aws_subnet.private" \
+            -target="aws_subnet.private_b" \
+            -target="aws_route_table.public" \
+            -target="aws_route_table_association.public" \
+            -target="aws_route_table_association.public_b" \
             -target="aws_security_group.db" \
+            -target="aws_vpc.main" \
             -auto-approve
