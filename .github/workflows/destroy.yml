@@ -63,7 +63,6 @@ jobs:
             -target="aws_instance.db" \
             -target="aws_nat_gateway.nat" \
             -target="aws_eip.nat" \
-            -target="aws_ecr_repository.app" \
             -auto-approve
 
       - name: 3. Phase 2 Destroy (Network Cleanup)
