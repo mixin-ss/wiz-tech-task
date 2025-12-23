@@ -1,7 +1,11 @@
-name: Destroy Infrastructure
+name: Destroy Infrastructure (Fail-Safe)
 
 on:
   workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
 
 jobs:
   destroy:
@@ -27,16 +31,31 @@ jobs:
       - name: Terraform Init
         run: terraform init
 
-      - name: 1. Clean up Kubernetes (Wait for ELB)
-        continue-on-error: true
+      - name: 1. Force Cleanup "Zombie" Load Balancers
+        # This script uses AWS CLI to find any ELB tagged with our Cluster ID and kills it.
+        # It runs BEFORE Terraform to ensure ENIs are detached.
         run: |
-          aws eks update-kubeconfig --name wiz-cluster --region us-east-1
-          kubectl delete service tasky-frontend || echo "Service not found"
-          echo "Waiting 90 seconds for AWS to detach Load Balancer Network Interfaces..."
-          sleep 90
+          echo "🔍 Searching for Load Balancers belonging to 'wiz-cluster'..."
+          
+          # Find Classic Load Balancers (ELB v1 - Standard for EKS)
+          # We search for any ELB that has the tag 'kubernetes.io/cluster/wiz-cluster'
+          ELB_NAMES=$(aws elb describe-load-balancers --query "LoadBalancerDescriptions[?contains(AvailabilityZones[0], 'us-east-1')].LoadBalancerName" --output text)
+          
+          for elb in $ELB_NAMES; do
+            TAGS=$(aws elb describe-tags --load-balancer-names $elb --output json)
+            # Check if tags contain our cluster name
+            if echo "$TAGS" | grep -q "wiz-cluster"; then
+              echo "💥 Found Zombie ELB: $elb. Deleting..."
+              aws elb delete-load-balancer --load-balancer-name $elb
+              echo "✅ Deleted $elb"
+            fi
+          done
 
-      - name: 2. Phase 1 Destroy (Compute & NAT)
-        # Destroy the "users" of the network first
+          echo "⏳ Waiting 60 seconds for AWS to detach Network Interfaces..."
+          sleep 60
+
+      - name: 2. Phase 1 Destroy (Compute & Gateways)
+        # We destroy the "users" of the network first to clear the subnets
         run: |
           terraform destroy \
             -target="aws_eks_node_group.nodes" \
@@ -44,10 +63,12 @@ jobs:
             -target="aws_instance.db" \
             -target="aws_nat_gateway.nat" \
             -target="aws_eip.nat" \
+            -target="aws_ecr_repository.app" \
             -auto-approve
 
       - name: 3. Phase 2 Destroy (Network Cleanup)
-        # Explicitly destroy the CONTENTS of the VPC, then the VPC itself
+        # Now that subnets are empty, we can safely delete the VPC
+        # We explicitly target the internals first, then the VPC
         run: |
           terraform destroy \
             -target="aws_internet_gateway.gw" \
