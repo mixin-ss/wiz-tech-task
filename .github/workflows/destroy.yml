@@ -1,11 +1,11 @@
 name: Destroy Infrastructure
 
 on:
-  workflow_dispatch:  # Creates a manual button in the GitHub Actions tab
+  workflow_dispatch:
 
 jobs:
   destroy:
-    name: Tear Down Infrastructure
+    name: Two-Stage Destruction
     runs-on: ubuntu-latest
     
     steps:
@@ -27,16 +27,19 @@ jobs:
       - name: Terraform Init
         run: terraform init
 
-      - name: Remove Load Balancer (Cost Saver)
-        # We explicitly delete the K8s service to ensure the AWS Load Balancer is removed.
-        # If we skip this, the cluster dies too fast and leaves the LB behind ($$$).
+      - name: 1. Clean up Kubernetes Load Balancer
         continue-on-error: true
         run: |
           aws eks update-kubeconfig --name wiz-cluster --region us-east-1
-          kubectl delete service tasky-frontend || echo "Service not found, continuing..."
+          # Delete the service to trigger ELB deletion
+          kubectl delete service tasky-frontend || echo "Service not found"
+          
+          # CRITICAL: Wait for AWS to actually detach the network interfaces
+          echo "Waiting 60 seconds for Load Balancer cleanup..."
+          sleep 60
 
-      - name: Targeted Destroy (Protect Backups)
-        # This destroys the Cost Drivers but EXCLUDES the S3 Bucket
+      - name: 2. Phase 1 Destroy (Compute & Gateways)
+        # We destroy the things that USE the network first
         run: |
           terraform destroy \
             -target="aws_eks_node_group.nodes" \
@@ -44,6 +47,13 @@ jobs:
             -target="aws_instance.db" \
             -target="aws_nat_gateway.nat" \
             -target="aws_eip.nat" \
+            -auto-approve
+
+      - name: 3. Phase 2 Destroy (Network)
+        # Now that the subnets are empty, we can safely delete the VPC
+        # This keeps the S3 bucket safe because we never target it
+        run: |
+          terraform destroy \
             -target="aws_vpc.main" \
             -target="aws_security_group.db" \
             -auto-approve
