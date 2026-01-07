@@ -1,1 +1,2 @@
 This file is for the Wiz exercise
+It's definitely not an API key.
